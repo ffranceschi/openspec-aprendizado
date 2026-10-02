@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Flask / SQLite
+instance/
+*.db
+
+# Testes
+.pytest_cache/
+.coverage
+htmlcov/
+
+# SO
+.DS_Store

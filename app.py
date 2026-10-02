@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 
@@ -19,6 +21,39 @@ class Cliente(db.Model):
             'email': self.email,
             'telefone': self.telefone
         }
+
+
+class Produto(db.Model):
+    __tablename__ = 'produtos'
+
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(255), nullable=False)
+    sku = db.Column(db.String(64), unique=True, nullable=False)
+    preco = db.Column(db.Numeric(10, 2, asdecimal=True), nullable=False)
+    descricao = db.Column(db.Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'nome': self.nome,
+            'sku': self.sku,
+            'preco': float(self.preco),
+            'descricao': self.descricao
+        }
+
+
+def parse_preco(value):
+    """Return value as Decimal, or None if it is not a valid price."""
+    # bool is a subclass of int, so it must be rejected explicitly
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        preco = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    if not preco.is_finite() or preco < 0 or preco.as_tuple().exponent < -2:
+        return None
+    return preco
 
 
 def create_app(config_name='development'):
@@ -104,6 +139,87 @@ def create_app(config_name='development'):
             return jsonify({'error': 'Cliente not found'}), 404
 
         db.session.delete(cliente)
+        db.session.commit()
+
+        return '', 204
+
+    @app.route('/produtos', methods=['POST'])
+    def create_produto():
+        data = request.get_json()
+
+        # Validate required fields
+        if not data or any(data.get(k) is None for k in ['nome', 'sku', 'preco']):
+            return jsonify({'error': 'Missing required fields: nome, sku, preco'}), 400
+
+        preco = parse_preco(data['preco'])
+        if preco is None:
+            return jsonify({'error': 'Invalid preco'}), 400
+
+        # Check for duplicate SKU
+        existing = Produto.query.filter_by(sku=data['sku']).first()
+        if existing:
+            return jsonify({'error': 'SKU already exists'}), 409
+
+        produto = Produto(
+            nome=data['nome'],
+            sku=data['sku'],
+            preco=preco,
+            descricao=data.get('descricao')
+        )
+        db.session.add(produto)
+        db.session.commit()
+
+        return jsonify(produto.to_dict()), 201
+
+    @app.route('/produtos', methods=['GET'])
+    def list_produtos():
+        produtos = Produto.query.all()
+        return jsonify([p.to_dict() for p in produtos]), 200
+
+    @app.route('/produtos/<int:id>', methods=['GET'])
+    def get_produto(id):
+        produto = db.session.get(Produto, id)
+        if not produto:
+            return jsonify({'error': 'Produto not found'}), 404
+        return jsonify(produto.to_dict()), 200
+
+    @app.route('/produtos/<int:id>', methods=['PUT'])
+    def update_produto(id):
+        produto = db.session.get(Produto, id)
+        if not produto:
+            return jsonify({'error': 'Produto not found'}), 404
+
+        data = request.get_json()
+
+        # Validate required fields
+        if not data or any(data.get(k) is None for k in ['nome', 'sku', 'preco']):
+            return jsonify({'error': 'Missing required fields: nome, sku, preco'}), 400
+
+        preco = parse_preco(data['preco'])
+        if preco is None:
+            return jsonify({'error': 'Invalid preco'}), 400
+
+        # Check for duplicate SKU (if changing SKU)
+        if data['sku'] != produto.sku:
+            existing = Produto.query.filter_by(sku=data['sku']).first()
+            if existing:
+                return jsonify({'error': 'SKU already exists'}), 409
+
+        produto.nome = data['nome']
+        produto.sku = data['sku']
+        produto.preco = preco
+        produto.descricao = data.get('descricao')
+        db.session.commit()
+
+        return jsonify(produto.to_dict()), 200
+
+    @app.route('/produtos/<int:id>', methods=['DELETE'])
+    def delete_produto(id):
+        produto = db.session.get(Produto, id)
+        if not produto:
+            return jsonify({'error': 'Produto not found'}), 404
+
+        db.session.delete(produto)
         db.session.commit()
 
         return '', 204
